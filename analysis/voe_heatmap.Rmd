@@ -1,0 +1,389 @@
+---
+title: "PILL Gaze Heatmap Visualization - LEAP VOE Data"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE)
+
+library(tidyverse)
+library(png)
+library(ggdensity)
+library(here)
+library(janitor)
+```
+
+## About
+
+Overlays gaze density on the stimulus video for one trial type at a time, frame by frame, and compiles the result into a video. Majority of the code is specific to the LEAP VOE data structure but can be adapted for other gaze/video datasets. Message Tori if you have questions.
+
+## Config
+
+```{r config}
+FRAME_RATE   <- 30 
+MS_PER_FRAME <- 1000 / FRAME_RATE
+
+# Gaze is normalized over the full screen, but PyHab displays the movie
+# scaled into a smaller centered AOI, not full screen. These let us remap
+# a gaze point back onto the movie's own (native-resolution) video frame.
+SCREEN_WIDTH  <- 1920
+SCREEN_HEIGHT <- 1080
+STIM_WIDTH    <- 1770  # AOI width as told to PyHab
+STIM_HEIGHT   <- 996   # AOI height as told to PyHab
+X_OFFSET      <- (SCREEN_WIDTH - STIM_WIDTH) / 2   # 75
+Y_OFFSET      <- (SCREEN_HEIGHT - STIM_HEIGHT) / 2 # 42
+
+stimuli_path  <- here("stimuli", "leap_voe_stimuli", "videos", "with_borders")
+gaze_csv_dir  <- here("data", "leap_voe_data", "raw_gaze", "csv")
+timing_dir    <- here("data", "leap_voe_data", "raw_events", "timing")
+output_folder <- here("data", "leap_voe_data", "gaze_heatmap_videos")
+frames_root   <- here("data", "leap_voe_data", "tmp_frames")
+combined_gaze_path <- here("data", "leap_voe_data", "raw_gaze", "voe_gaze_combined.csv")
+
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+dir.create(frames_root,   showWarnings = FALSE, recursive = TRUE)
+
+video_map <- c(
+  "exp_duck" = "duck_expected_bright.mp4",
+  "sur_duck" = "duck_surprise_bright.mp4",
+  "exp_shoe" = "shoe_expected_bright.mp4",
+  "sur_shoe" = "shoe_surprise_bright.mp4",
+  "duck_fam" = "fam_duck_bright.mp4",
+  "shoe_fam" = "fam_shoe_bright.mp4"
+)
+
+# change this to run a different trial
+TRIAL_TO_RUN <- "sur_duck"
+```
+
+## Build Trial Timing 
+
+LEAP_VOE Specific Information: Each MOV trial (e.g. trial 5, "...SUR_DUCK_MOV") is immediately followed by its matching STILL trial (trial 6, same content), which just holds the last frame frozen while looking is manually coded. The coding window (i.e., STILL trials) end when the baby looks away for 2s or more. Since the full video includes that coding period, the window built here spans from movie start through the *end* of the paired STILL trial, not just through `endMoviePlayback`, to capture gaze points during the key looking window.
+
+**TL;DR - We need to know when the key events start and stop for each infant so we can filter gaze points to just the relevant window for each trial type.**
+
+Adjust for your own data structure using whatever tags in your raw data indicate the start and end of the relevant trial window(s), then create a df with columns `sub_id`, `trial_type`, `t_start`, and `t_end` (in ms) for each trial type of interest. You'll need equivalent tags in your gaze data to join everything.
+
+```{r build-trial-timing}
+
+# Build short trial-type code matching video_map keys, e.g.
+# "Test.SUR_DUCK.SUR_DUCK_MOV" -> "sur_duck", "Fam.FAM_SHOE.SHOE_FAM_MOV" -> "shoe_fam"
+get_short_trial_type <- function(trial_type_str) {
+  if (startsWith(trial_type_str, "Fam.")) {
+    phase <- "fam"
+  } else if (str_detect(trial_type_str, "SUR_")) {
+    phase <- "sur"
+  } else if (str_detect(trial_type_str, "EXP_")) {
+    phase <- "exp"
+  } else {
+    return(NA_character_)
+  }
+
+  if (str_detect(trial_type_str, "DUCK")) {
+    obj <- "duck"
+  } else if (str_detect(trial_type_str, "SHOE")) {
+    obj <- "shoe"
+  } else {
+    return(NA_character_)
+  }
+
+  if (phase == "fam") paste0(obj, "_fam") else paste0(phase, "_", obj)
+}
+
+# Grab all timing files and build a single data frame with trial start/end times for each subject and trial type 
+timing_files <- list.files(timing_dir, pattern = "_leap_voe_timing\\.csv$", full.names = TRUE)
+
+trial_timing <- map_dfr(timing_files, function(f) {
+  sub_id <- str_remove(basename(f), "_leap_voe_timing\\.csv$")
+  timing_raw <- read_csv(f, show_col_types = FALSE)
+
+  # MOV trials, identified from their startTrial row
+  mov_trials <- timing_raw |>
+    filter(event == "startTrial", str_ends(trialType, "_MOV")) |>
+    select(trialNum, trialType)
+
+  # When the movie actually starts playing (t_start)
+  movie_start_lookup <- timing_raw |>
+    filter(event == "startMoviePlayback") |>
+    select(trialNum, movie_start_time = time)
+
+  # When each trial ends, keyed by trialNum - used to find the paired
+  # STILL trial's end (the freeze window's endTrial, which is trialNum + 1)
+  # STILL duration is capped at 30s by design, so t_end never exceeds the video's length
+  end_trial_lookup <- timing_raw |>
+    filter(event == "endTrial") |>
+    select(trialNum, still_end_time = time)
+
+  mov_trials |>
+    left_join(movie_start_lookup, by = "trialNum") |>
+    mutate(still_trial_num = trialNum + 1) |>
+    left_join(end_trial_lookup, by = c("still_trial_num" = "trialNum")) |>
+    mutate(
+      sub_id = sub_id,
+      trial_type = map_chr(trialType, get_short_trial_type),
+      t_start = movie_start_time * 1000,  # seconds -> ms
+      t_end = still_end_time * 1000       # end of the paired STILL trial's freeze window
+    ) |>
+    filter(!is.na(trial_type), !is.na(t_end)) |>
+    select(sub_id, trial_type, trial_num = trialNum, t_start, t_end)
+})
+```
+
+## Build Combined Gaze Data
+
+Combine all gaze CSVs into a single data frame, parse the gaze coordinates, and compute a single gaze point (gaze_x, gaze_y) for each sample. 
+Saves to `voe_gaze_combined.csv` for caching.
+
+```{r combine-gaze}
+rebuild <- FALSE # change to TRUE to rebuild of combined gaze data if adding new files
+
+if (file.exists(combined_gaze_path) && !rebuild) {
+  message("Loading cached combined gaze data: ", combined_gaze_path)
+  gaze_data <- read_csv(combined_gaze_path, show_col_types = FALSE)
+} else {
+  message("Building combined gaze data from raw_gaze/csv...")
+
+  gaze_files <- list.files(gaze_csv_dir, pattern = "_leap_voe_gaze\\.csv$", full.names = TRUE) # grab all gaze CSVs
+
+  # parse gaze coordinates from "(x,y)" string to numeric x and y columns
+  parse_gaze <- function(col) { 
+    col |>
+      str_remove_all("[()\\s]") |>
+      str_split(",", simplify = TRUE) |>
+      apply(2, function(x) { x[x == "nan"] <- NA; as.numeric(x) }) |>
+      as.data.frame() |>
+      setNames(c("x", "y"))
+  }
+
+  # Define your columns, not strictly necessary but avoids readr throwing warnings abt blank rows
+  gaze_col_types <- cols(
+    device_time_stamp = col_double(),
+    left_gaze_point_on_display_area = col_character(),
+    right_gaze_point_on_display_area = col_character(),
+    left_gaze_point_validity = col_double(),
+    right_gaze_point_validity = col_double(),
+    off_screen = col_double(),
+    gaze_event_tag = col_character(),
+    trial_type = col_character(),
+    event_info = col_character()
+  )
+
+  # here we read each gaze CSV, parse the gaze coordinates, and compute a single gaze point (gaze_x, gaze_y) for each sample
+  gaze_data <- map_dfr(gaze_files, function(f) {
+    sub_id <- str_remove(basename(f), "_leap_voe_gaze\\.csv$")
+    raw <- read_csv(f, col_types = gaze_col_types) |> clean_names()
+
+    left_coords  <- parse_gaze(raw$left_gaze_point_on_display_area)
+    right_coords <- parse_gaze(raw$right_gaze_point_on_display_area)
+
+    raw |>
+      mutate(
+        sub_id = sub_id,
+        lx = left_coords$x,  ly = left_coords$y, # parse left and right gaze coordinates into separate columns
+        rx = right_coords$x, ry = right_coords$y, 
+        gaze_x = case_when( 
+          !is.na(lx) & !is.na(rx) ~ (lx + rx) / 2, # average if both eyes are valid
+          !is.na(lx)               ~ lx, # use left eye if only left is valid
+          !is.na(rx)               ~ rx, # use right eye if only right is valid
+          TRUE                     ~ NA_real_
+        ),
+        gaze_y = case_when( 
+          !is.na(ly) & !is.na(ry) ~ (ly + ry) / 2, 
+          !is.na(ly)               ~ ly, 
+          !is.na(ry)               ~ ry, 
+          TRUE                     ~ NA_real_
+        )
+      ) |>
+      select(sub_id, device_time_stamp, gaze_x, gaze_y) # we only need these columns for the heatmap, but you can keep more if you want
+  })
+
+  write_csv(gaze_data, combined_gaze_path)
+  message("Saved combined gaze data: ", combined_gaze_path)
+}
+```
+
+## Join Gaze to Trial Windows and Compute Frames
+
+```{r join-and-frame}
+# join gaze data with trial timing to get trial_type and frame number for each gaze sample
+# frame number comes from the trial start time and the known frame rate (30 fps) 
+# the frame rate 
+
+gaze_timed <- gaze_data |>
+  inner_join(
+    trial_timing,
+    by = join_by(sub_id, between(device_time_stamp, t_start, t_end))
+  ) |>
+  mutate(
+    t_rel = device_time_stamp - t_start,
+    frame = floor(t_rel / MS_PER_FRAME) + 1L
+  ) |>
+  filter(!is.na(gaze_x), !is.na(gaze_y), frame >= 1)
+
+# sanity check - max_frame should roughly match the movie's frame count
+gaze_timed |>
+  filter(trial_type == TRIAL_TO_RUN) |>
+  summarise(max_frame = max(frame), n_participants = n_distinct(sub_id))
+```
+
+## Sanity Check: Preview the Composited Scene
+
+Saves a single frame (video placed into the AOI, on the full-screen white background) so you can visually confirm the border/offset math is right before rendering a whole trial. Placement/scaling is done by ggplot's `annotation_raster()`.
+
+```{r preview-composite}
+preview_path <- here("data", "leap_voe_data", "gaze_heatmap_videos", "scene_preview.png")
+
+preview_frame_path <- file.path(tempdir(), "preview_frame.png")
+system(paste0(
+  'ffmpeg -y -i "', file.path(stimuli_path, video_map[[TRIAL_TO_RUN]]), '" ',
+  '-vframes 1 "', preview_frame_path, '"'
+))
+
+frame_img <- as.raster(readPNG(preview_frame_path))
+
+preview_plot <- ggplot() +
+  theme_void() +
+  theme(panel.background = element_rect(fill = "white"),
+        plot.margin = margin(0, 0, 0, 0)) +
+  annotation_raster(frame_img,
+                     xmin = X_OFFSET, xmax = X_OFFSET + STIM_WIDTH,
+                     ymin = Y_OFFSET, ymax = Y_OFFSET + STIM_HEIGHT) +
+  scale_x_continuous(limits = c(0, SCREEN_WIDTH), expand = c(0, 0)) +
+  scale_y_continuous(limits = c(0, SCREEN_HEIGHT), expand = c(0, 0)) +
+  coord_fixed()
+
+ggsave(preview_path, preview_plot, width = SCREEN_WIDTH / 100, height = SCREEN_HEIGHT / 100, units = "in", dpi = 100)
+message("Saved scene preview: ", preview_path)
+preview_plot
+```
+
+## Animate Function
+
+```{r animate-function}
+animate_trial <- function(trial_name, max_frames = NULL) { # change max_frames to limit frames rendered for testing, NULL for full
+
+  video_file       <- file.path(stimuli_path, video_map[[trial_name]])
+  frame_split_path <- file.path(frames_root, paste0("split_", trial_name))
+  frame_merge_path <- file.path(frames_root, paste0("merge_", trial_name))
+  dir.create(frame_split_path, showWarnings = FALSE)
+  dir.create(frame_merge_path, showWarnings = FALSE)
+
+  message("Extracting frames: ", trial_name)
+  system(paste0(
+    'ffmpeg -y -i "', video_file, '" -vf "fps=', FRAME_RATE, '" "',
+    frame_split_path, '/', trial_name, '_%04d.png"'
+  ))
+  message("Frame extraction complete")
+
+  n_extracted <- length(list.files(frame_split_path, pattern = paste0("^", trial_name, "_[0-9]{4}\\.png$"))) # count frames
+  last_frame_path <- file.path(frame_split_path, sprintf("%s_%04d.png", trial_name, n_extracted)) # set path to last frame (for coding window portion)
+
+  trial_gaze <- gaze_timed |>
+    filter(trial_type == trial_name) |>
+    dplyr::select(sub_id, frame, gaze_x, gaze_y)
+
+  total_frames <- max(trial_gaze$frame)
+
+  frames_to_render <- if (!is.null(max_frames)) {
+    min(max_frames, total_frames)
+  } else {
+    total_frames
+  }
+
+  message("Rendering ", frames_to_render, " of ", total_frames, " frames for: ", trial_name)
+
+  walk(seq_len(frames_to_render), function(f) {
+
+    if (f %% 50 == 0) message("  Frame ", f, " of ", frames_to_render)
+
+    img_name <- paste0(trial_name, sprintf("_%04d.png", f))
+    img_path <- file.path(frame_split_path, img_name)
+    out_path <- file.path(frame_merge_path, img_name)
+
+    if (!file.exists(img_path)) {
+      # past the movie's raw length -- hold on the last extracted frame
+      # all gaze points in this frame will be from the STILL trials (coding window)
+      img_path <- last_frame_path
+    }
+  
+    if (!file.exists(img_path)) { # if the last frame is missing, something went wrong with ffmpeg extraction
+      message("  WARNING: no frame available (movie extraction may have failed): ", img_name) 
+      return(invisible(NULL))
+    }
+    
+    # This is where things get a little complicated! We need to build exactly what infants saw on the 1920x1080 screen
+    # The video is set in PyHab as 1770 x 996 with a 75px border on the left and right, and a 42px border on the top and bottom
+    # I use ggplot to render the video frame into its AOI on a white full-screen background, then overlay the gaze density heatmap on top of that
+    frame_img <- as.raster(readPNG(img_path))
+    img_w <- SCREEN_WIDTH
+    img_h <- SCREEN_HEIGHT
+
+    # Gaze is normalized over the full screen, so we can just multiply gaze_x
+    # and gaze_y by the screen width and height to get full-screen pixel coordinates
+    frame_gaze <- trial_gaze |>
+      filter(frame == f) |>
+      mutate(
+        px = gaze_x * img_w,
+        py = (1 - gaze_y) * img_h
+      ) |>
+      filter(px >= 0, px <= img_w, py >= 0, py <= img_h)
+
+    if (nrow(frame_gaze) < 3) {
+      file.copy(img_path, out_path)
+      return(invisible(NULL))
+    }
+
+    # Now we can render the gaze density heatmap on top of the video frame,
+    # placed into its AOI on a white full-screen background...
+    tryCatch(
+      ggsave(
+        out_path,
+        plot =
+          ggplot(frame_gaze, aes(px, py)) +
+          theme_void() +
+          theme(legend.position = "none",
+                panel.background = element_rect(fill = "white"),
+                plot.margin = margin(0, 0, 0, 0)) +
+          annotation_raster(frame_img,
+                            xmin = X_OFFSET, xmax = X_OFFSET + STIM_WIDTH,
+                            ymin = Y_OFFSET, ymax = Y_OFFSET + STIM_HEIGHT) +
+          geom_hdr(aes(fill = after_stat(probs)), alpha = 0.5) +
+          scale_x_continuous(limits = c(0, img_w), expand = c(0, 0)) +
+          scale_y_continuous(limits = c(0, img_h), expand = c(0, 0)) +
+          coord_fixed(),
+        width  = img_w / 100,
+        height = img_h / 100,
+        units  = "in",
+        dpi    = 100
+      ),
+      error = function(e) {
+        message("  Frame ", f, " failed: ", e$message)
+        file.copy(img_path, out_path)
+      }
+    )
+  })
+
+  message("Rendering complete, starting ffmpeg compilation...") # and start ffmpeg to compile the frames into a video
+
+  ffmpeg_cmd <- paste0(
+    'ffmpeg -y -framerate ', FRAME_RATE, ' -i "',
+    frame_merge_path, '/', trial_name, '_%04d.png" ',
+    '-c:v libx264 -vf format=yuv420p "',
+    output_folder, '/', trial_name, '_gaze.mp4"'
+  )
+  message("Running: ", ffmpeg_cmd)
+  system(ffmpeg_cmd)
+
+  message("Compilation complete, cleaning up...")
+  unlink(frame_split_path, recursive = TRUE)
+  unlink(frame_merge_path, recursive = TRUE)
+  message("Done: ", trial_name)
+}
+```
+
+## Run Single Trial
+
+```{r run-trial}
+# change TRIAL_TO_RUN in the config chunk above to switch trials
+animate_trial(TRIAL_TO_RUN)
+```
