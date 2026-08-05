@@ -3,3 +3,8 @@
 
 #ignore venv specific stuff
 .vscode/settings.json
+.Rproj.user
+
+# ignore big files
+voe_gaze_combined.csv
+data/leap_voe_data/gaze_heatmap_videos/
