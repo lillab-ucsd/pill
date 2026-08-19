@@ -142,11 +142,15 @@ STIM_HEIGHT   <- 996
 X_OFFSET      <- (SCREEN_WIDTH - STIM_WIDTH) / 2
 Y_OFFSET      <- (SCREEN_HEIGHT - STIM_HEIGHT) / 2
 
-WINDOW_GIF_FPS <- 1    # output gif playback speed: how many WINDOWS (not video frames)
-                       # are shown per second. At 1, each window is on screen for a full
-                       # second before advancing to the next -- this is a slideshow pace,
-                       # deliberately slow enough to actually read the "n =" counts and
-                       # time labels. Raise this to make the GIF play faster/shorter.
+WINDOW_GIF_FPS <- 1 / STEP_SEC   # output gif playback speed: how many WINDOWS (not video
+                       # frames) are shown per second. Set to 1/STEP_SEC so playback
+                       # duration matches the real elapsed time of the underlying
+                       # movie+still window (each window's screen-time == STEP_SEC,
+                       # matching how far it advances the underlying timeline). At the
+                       # old fixed value of 1, windows overlap (STEP_SEC < WINDOW_SEC)
+                       # but each still got a full real second on screen, so playback ran
+                       # ~WINDOW_SEC/STEP_SEC times longer than the real event duration
+                       # (2x, at the old 2s/0.5s settings).
 GIF_WIDTH      <- 700  # output gif width in px; height scales automatically to preserve
                        # the (two-screens-tall) aspect ratio. Smaller = smaller file size.
 
