@@ -1,0 +1,497 @@
+---
+title: "Group Fixation-Density Heatmaps by Presentation Order"
+output: html_document
+---
+
+## What this produces
+
+For each of the 4 test trial types (expected_duck, surprise_duck,
+expected_shoe, surprise_shoe), this renders one GIF with two stacked
+panels: occurrence 1 (the infant's FIRST time seeing that clip, top panel)
+above occurrence 2 (their SECOND time seeing it, bottom panel). Each
+trial type is shown to a given infant twice (see the timing files -- e.g.
+trials 5/6 and 9/10 are both "expected_duck", trials 7/8 and 11/12 are
+both "surprise_shoe" for a subject who got that object/condition
+assignment). This lets you visually compare whether gaze behavior differs
+between the first and second exposure to the same event.
+
+Each GIF steps through a SLIDING TIME WINDOW (default: 2s wide, sliding by
+0.5s each step -- e.g. 0-2s, 0.5-2.5s, 1-3s, ...). Every step is a static
+group-level (all subjects pooled) fixation-density heatmap for that
+window, composited over the video frame at the window's midpoint. This is
+NOT a smooth video with a moving heatmap overlaid frame-by-frame -- it's a
+slideshow of overlapping snapshots, each one a "what did the group look at
+during this ~2 second stretch" summary. That's a deliberate choice: with
+infant fixation counts this low, a true per-video-frame (1/30s) heatmap
+would have too few pooled points per frame to mean anything.
+
+The windows run from movie start all the way through the end of the
+STILL (frozen last-frame) period, not just through the movie itself.
+STILL duration is NOT fixed -- it lasts until the infant looks away (or
+caps at 30s by design), so different subjects contribute data for
+different lengths of time. Because of that, every panel is annotated with
+"n = X" (top-right, white text on a dark box) showing how many distinct
+subjects actually have a fixation in THAT SPECIFIC window -- this number
+will shrink over the course of the GIF as infants look away one by one.
+Treat windows with a low n with appropriate skepticism; the heatmap shape
+for e.g. n=2 is not a reliable group estimate.
+
+## How to adapt this for other uses
+
+- Change `WINDOW_SEC` / `STEP_SEC` below to make windows wider/narrower or
+  more/less overlapping.
+- Change the `video_map` list to point at different stimulus videos.
+- The whole thing runs off `x_label_fixations.py`'s output, not raw gaze --
+  if you want a raw-gaze version (denser, but no duration-weighting
+  needed since raw samples arrive at a fixed rate), start from
+  `voe_heatmap.Rmd`'s approach instead, which does that already.
+
+## Why fixations instead of raw gaze
+
+Unlike `voe_heatmap.Rmd`, which uses raw gaze samples, this was a
+deliberate choice to use the I2MC fixation output from
+`x_label_fixations.py` rather than raw continuous samples, so the heatmap
+reflects "where the group actually looked" (post-filtering of
+blinks/saccades/data loss) rather than every raw sample including noise.
+
+## Duration weighting
+
+A fixation that lasted 1000ms should count for more than one that lasted
+40ms. `ggdensity::geom_hdr` has NO native `weight` aesthetic -- confirmed
+by reading ggdensity's actual source (`StatHdr$compute_group` and
+`get_hdr()` both only ever touch `data$x`/`data$y`, never a weight
+column). So duration-weighting is faked by REPEATING each fixation's
+(x, y) position once per `TICK_MS` of overlap between that fixation and
+the current window (clipped to just the overlapping portion -- a fixation
+that's only half inside a window contributes only that half's worth of
+duration, not its full duration). More repeats = more influence on the
+density estimate for that window. See `TICK_MS` below to change the
+granularity of this.
+
+## Bounds filtering
+
+A fixation's gaze position can legitimately fall outside the physical
+screen (0-1920 x 0-1080 px) -- I2MC doesn't clip to the display. Those
+fixations are dropped BEFORE any windowing or plotting happens (see the
+`filter(x >= 0, x <= SCREEN_WIDTH, ...)` call below), so they can never
+contribute to (or bias) the density estimate, not merely be excluded from
+the visual render. Note this filters to the full SCREEN bounds, not the
+narrower stimulus/AOI bounds (1770x996) -- an infant can validly look at
+blank screen space around the toy.
+
+## Panel clipping
+
+A subtler bug worth knowing about if you touch this code: ggdensity's KDE
+grid defaults to the FULL plot scale range unless told otherwise via
+xlim/ylim -- since this plot has two panels stacked into one canvas, that
+means a density contour computed from the TOP panel's data could visually
+bleed across the divider into the BOTTOM panel's space (and vice versa),
+even though the underlying data points themselves never cross that line.
+Confirmed by pixel-scanning the gap between panels before/after the fix.
+Each `geom_hdr()` call below passes explicit xlim/ylim to constrain its
+density grid to its own panel's half of the canvas -- don't remove those
+or the bleeding comes back.
+
+## Data source
+
+The labeled fixation files from `x_label_fixations.py`
+(`data/leap_voe_data/fixations/[subject]/[subject]_leap_voe_gaze_fix_labeled.csv`),
+filtered to `phase %in% c("movie", "still")` -- i.e. excludes
+attention-getter and inter-trial-interval fixations.
+
+## Output
+
+`data/leap_voe_data/gaze_heatmap_videos/gaze_occurrence/[trial_type]_occurrence_compare.gif`
+(and a same-named .mp4, which is the higher-quality byproduct of building
+the gif). This folder is gitignored, same as `voe_heatmap.Rmd`'s output --
+these are meant to be regenerated locally from source data, not committed.
+A full run (all 4 trial types) takes a few minutes.
+
+```{r setup}
+library(tidyverse)
+library(png)
+library(ggdensity)
+library(here)
+library(janitor)
+```
+
+## Config
+
+`FRAME_RATE` must match the stimulus mp4s' actual encoded frame rate
+(used both to extract frames via ffmpeg and to pick a window's background
+frame). Sliding windows are `WINDOW_SEC` wide, advancing `STEP_SEC` at a
+time. Duration-weighting repeats each fixation's (x, y) once per
+`TICK_MS` of its overlap with a window. `WINDOW_GIF_FPS` is fixed at
+`1 / STEP_SEC` so playback duration matches the real elapsed time of the
+underlying window sequence (windows overlap since `STEP_SEC < WINDOW_SEC`,
+so a fixed fps of 1 would make playback run `WINDOW_SEC / STEP_SEC` times
+too long).
+
+Screen/stimulus geometry mirrors how the "with_borders" stimulus videos
+were built and displayed by PyHab (see `voe_heatmap.Rmd`'s config chunk
+for the same numbers): full display is `SCREEN_WIDTH x SCREEN_HEIGHT`,
+the stimulus is scaled to `STIM_WIDTH x STIM_HEIGHT` and centered, leaving
+a border (`X_OFFSET`/`Y_OFFSET`) baked into the video pixels themselves
+(its exact extent varies a bit by scene, so don't assume the area right
+at the AOI edge is reliably dark -- this is why the "n =" label further
+down uses an opaque box rather than bare white text).
+
+```{r config}
+FRAME_RATE   <- 30   # stimulus mp4s' actual encoded fps
+MS_PER_FRAME <- 1000 / FRAME_RATE
+
+WINDOW_SEC <- 2     # sliding window width, seconds
+STEP_SEC   <- 0.5   # window step size, seconds (overlap = WINDOW_SEC - STEP_SEC)
+TICK_MS    <- 20    # duration-weighting granularity: ms of overlap per repeated point
+
+SCREEN_WIDTH  <- 1920
+SCREEN_HEIGHT <- 1080
+STIM_WIDTH    <- 1770
+STIM_HEIGHT   <- 996
+X_OFFSET      <- (SCREEN_WIDTH - STIM_WIDTH) / 2
+Y_OFFSET      <- (SCREEN_HEIGHT - STIM_HEIGHT) / 2
+
+WINDOW_GIF_FPS <- 1 / STEP_SEC   # windows/sec; keeps playback duration == real elapsed time
+GIF_WIDTH      <- 700            # output gif width, px (height auto-scales)
+```
+
+Paths resolve via `here()` relative to the project root (`pill.Rproj`), so
+this runs correctly regardless of working directory. GIFs/mp4s now save
+into a `gaze_occurrence` subfolder of the existing heatmap output
+directory.
+
+```{r paths}
+stimuli_path   <- here("stimuli", "leap_voe_stimuli", "videos", "with_borders")
+fixations_dir  <- here("data", "leap_voe_data", "fixations")
+timing_dir     <- here("data", "leap_voe_data", "raw_events", "timing")
+output_folder  <- here("data", "leap_voe_data", "gaze_heatmap_videos", "gaze_occurrence")
+frames_root    <- here("data", "leap_voe_data", "tmp_frames")  # scratch space, cleared per trial type
+
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+dir.create(frames_root,   showWarnings = FALSE, recursive = TRUE)
+```
+
+Only the 4 test trial types get a GIF -- familiarization trials
+(`fam_duck`/`fam_shoe`) are present in the fixation data but not rendered,
+since each infant sees familiarization only once (no 1st-vs-2nd
+comparison to make).
+
+```{r video-map}
+video_map <- c(
+  "expected_duck"  = "duck_expected_bright.mp4",
+  "surprise_duck"  = "duck_surprise_bright.mp4",
+  "expected_shoe"  = "shoe_expected_bright.mp4",
+  "surprise_shoe"  = "shoe_surprise_bright.mp4"
+)
+```
+
+## Building the fixation table
+
+For each subject, join their labeled fixations to their own timing file
+to get every MOV trial's `startMoviePlayback` time, then duplicate it
+under `trialNum + 1` so the paired STILL trial (always the next trialNum)
+inherits the same t=0 anchor -- this puts movie and still fixations from
+the same presentation on one continuous 0-based timeline. Subjects
+missing a timing file (101, 107 as of writing) are skipped, matching
+`x_label_fixations.py`'s own skip behavior.
+
+```{r get-movie-starts}
+get_movie_starts <- function(sub_id) {
+  timing_path <- file.path(timing_dir, paste0(sub_id, "_leap_voe_timing.csv"))
+  if (!file.exists(timing_path)) return(NULL)
+  timing_raw <- read_csv(timing_path, show_col_types = FALSE)
+  mov_starts <- timing_raw |>
+    filter(event == "startMoviePlayback") |>
+    select(trialNum, movie_start = time) |>
+    mutate(movie_start = movie_start * 1000)  # timing files are in seconds; we work in ms
+  still_starts <- mov_starts |> mutate(trialNum = trialNum + 1)  # STILL inherits its MOV trial's anchor
+  bind_rows(mov_starts, still_starts)
+}
+```
+
+For every subject's fixation file: keep only movie/still fixations with a
+known trial type, join in movie start times, convert each fixation's
+start/end to ms-since-that-trial's-movie-start, and drop any fixation
+whose gaze position falls outside the physical screen (see "Bounds
+filtering" above) before it can influence any density estimate.
+
+```{r build-fixations}
+fix_files <- list.files(fixations_dir, pattern = "_fix_labeled\\.csv$",
+                         recursive = TRUE, full.names = TRUE)
+message("Found ", length(fix_files), " labeled fixation files")
+
+all_fixations <- map_dfr(fix_files, function(f) {
+  sub_id <- str_remove(basename(f), "_leap_voe_gaze_fix_labeled\\.csv$")
+
+  movie_starts <- get_movie_starts(sub_id)
+  if (is.null(movie_starts)) return(tibble())  # no timing file -- skip subject
+
+  fix_df <- read_csv(f, show_col_types = FALSE) |> clean_names()  # startT -> start_t, etc.
+
+  movie_fix <- fix_df |>
+    filter(phase %in% c("movie", "still"), !is.na(trial_num), trial_type != "") |>
+    inner_join(movie_starts, by = c("trial_num" = "trialNum"))
+
+  if (nrow(movie_fix) == 0) return(tibble())
+
+  movie_fix |>
+    transmute(
+      sub_id = sub_id,
+      trial_type = trial_type,          # e.g. "expected_duck_1" (includes occurrence suffix)
+      start_rel = start_t - movie_start, # ms since this trial's own movie start
+      end_rel   = end_t - movie_start,
+      x = xpos,   # I2MC fixation x, screen pixel space (top-left origin)
+      y = ypos    # same, y-down
+    ) |>
+    filter(x >= 0, x <= SCREEN_WIDTH, y >= 0, y <= SCREEN_HEIGHT)  # drop off-screen fixations
+})
+
+message("Total movie+still fixations (in-bounds): ", nrow(all_fixations))
+message("Trial types present: ", paste(sort(unique(all_fixations$trial_type)), collapse = ", "))
+```
+
+## Sliding windows and duration weighting
+
+`build_windows()` generates the sequence of sliding windows covering
+`[0, total_ms]` (`WINDOW_SEC` wide, starting every `STEP_SEC`; the last
+window is truncated to end exactly at `total_ms`). Each window's
+`mid_frame` is the background video frame to composite it over -- the
+frame at the window's temporal midpoint, later clamped to the last real
+frame during the STILL period so the display correctly "freezes".
+
+`expand_to_windows()` implements the duration-weighting scheme described
+above: each fixation's (x, y) is repeated once per `TICK_MS` of its
+overlap with a given window, clipped to just the overlapping portion. A
+fixation with zero overlap with a window contributes nothing to it.
+
+```{r windowing-functions}
+build_windows <- function(total_ms) {
+  window_ms <- WINDOW_SEC * 1000
+  step_ms   <- STEP_SEC * 1000
+  w_start <- seq(0, total_ms - window_ms, by = step_ms)
+  if (length(w_start) == 0) w_start <- 0  # clip shorter than one window -- use a single window
+  tibble(
+    window_idx = seq_along(w_start),
+    w_start = w_start,
+    w_end   = pmin(w_start + window_ms, total_ms),
+    mid_frame = pmax(1, floor(((w_start + pmin(w_start + window_ms, total_ms)) / 2) / MS_PER_FRAME) + 1)
+  )
+}
+
+expand_to_windows <- function(fixations_df, windows) {
+  if (nrow(fixations_df) == 0) return(tibble())
+
+  map_dfr(seq_len(nrow(windows)), function(i) {
+    w_start <- windows$w_start[i]
+    w_end   <- windows$w_end[i]
+
+    overlap_start <- pmax(fixations_df$start_rel, w_start)
+    overlap_end   <- pmin(fixations_df$end_rel, w_end)
+    overlap_ms    <- overlap_end - overlap_start
+
+    keep <- overlap_ms > 0
+    if (!any(keep)) return(tibble())
+
+    n_reps <- pmax(1, round(overlap_ms[keep] / TICK_MS))  # >=1 rep even for a brief overlap
+
+    tibble(
+      sub_id = fixations_df$sub_id[keep],
+      window_idx = windows$window_idx[i],
+      x = fixations_df$x[keep],
+      y = fixations_df$y[keep]
+    ) |>
+      uncount(n_reps)
+  })
+}
+```
+
+## Rendering one trial type's comparison GIF
+
+`render_occurrence_comparison()` builds one stacked GIF (occurrence 1 on
+top, occurrence 2 on bottom) for a given base trial type:
+
+- Extracts every frame of the stimulus video via ffmpeg (the actual
+  bordered video shown to infants), and splits `all_fixations` into this
+  trial type's 1st vs. 2nd presentation (`_1`/`_2` suffix). Subject sets
+  for occurrence 1 and 2 aren't guaranteed identical -- a subject can have
+  usable data for one presentation but not the other.
+- Sliding windows run for however long is greater: the movie's own
+  length, or the latest fixation end-time across either occurrence
+  (STILL can extend well past the movie, capped at 30s by design, and
+  differs by subject) -- this keeps both panels sharing one window
+  sequence, so `window_idx` means "same relative time since movie start"
+  in both panels.
+- Each window's plot composites the background video frame with a
+  `geom_hdr()` density layer per occurrence, using I2MC (x, y) positions
+  flipped from y-down/pixel-space to ggplot's y-up (no rescaling needed --
+  I2MC positions are already in pixel space, unlike `voe_heatmap.Rmd`'s
+  normalized 0-1 gaze coords). `xlim`/`ylim` are passed explicitly to each
+  `geom_hdr()` call to keep its KDE grid inside its own panel (see "Panel
+  clipping" above).
+- `has_spread()` + `tryCatch` guard against `MASS::kde2d()`'s "bandwidths
+  must be strictly positive" error, which happens when a window's points
+  have near-zero (x, y) variance (e.g. one subject's one fixation,
+  duration-repeated) -- that window just renders without a heatmap layer
+  for that occurrence instead of crashing the run.
+- The "n = " subject-count box is added last (after the density layers)
+  so it always draws on top, and uses an opaque background rather than
+  bare white text since the bordered stimulus videos have their own
+  baked-in white letterboxing plus variable scene brightness in that
+  corner.
+- Frames are compiled to mp4, then to GIF via ffmpeg's two-pass palette
+  generation (`palettegen`/`paletteuse`, better color quality than a
+  naive single-pass conversion), and per-trial-type scratch frames are
+  deleted at the end.
+
+```{r render-function}
+render_occurrence_comparison <- function(base_trial_type) {
+  message("\n=== ", base_trial_type, " ===")
+
+  video_file <- file.path(stimuli_path, video_map[[base_trial_type]])
+  frame_split_path <- file.path(frames_root, paste0("split_", base_trial_type))
+  frame_merge_path <- file.path(frames_root, paste0("merge_", base_trial_type))
+  dir.create(frame_split_path, showWarnings = FALSE)
+  dir.create(frame_merge_path, showWarnings = FALSE)
+
+  message("Extracting frames from: ", basename(video_file))
+  system(paste0(
+    'ffmpeg -y -i "', video_file, '" -vf "fps=', FRAME_RATE, '" "',
+    frame_split_path, '/frame_%04d.png"'
+  ))
+  n_frames <- length(list.files(frame_split_path, pattern = "^frame_[0-9]{4}\\.png$"))
+  movie_ms <- n_frames * MS_PER_FRAME
+  message("Extracted ", n_frames, " frames (", round(movie_ms/1000, 1), "s movie)")
+
+  occ1_fix <- all_fixations |> filter(trial_type == paste0(base_trial_type, "_1"))
+  occ2_fix <- all_fixations |> filter(trial_type == paste0(base_trial_type, "_2"))
+  message("Occurrence 1: ", n_distinct(occ1_fix$sub_id), " subjects, ", nrow(occ1_fix), " fixations")
+  message("Occurrence 2: ", n_distinct(occ2_fix$sub_id), " subjects, ", nrow(occ2_fix), " fixations")
+
+  max_fix_ms <- suppressWarnings(max(c(occ1_fix$end_rel, occ2_fix$end_rel), na.rm = TRUE))
+  total_ms <- max(movie_ms, max_fix_ms, na.rm = TRUE)
+  if (!is.finite(total_ms)) total_ms <- movie_ms  # no fixations at all for this trial type
+
+  windows <- build_windows(total_ms)
+  message("Built ", nrow(windows), " sliding windows (", WINDOW_SEC, "s window, ", STEP_SEC, "s step, ",
+          round(total_ms/1000, 1), "s total incl. STILL)")
+
+  occ1 <- expand_to_windows(occ1_fix, windows)
+  occ2 <- expand_to_windows(occ2_fix, windows)
+
+  canvas_w <- SCREEN_WIDTH
+  canvas_h <- SCREEN_HEIGHT * 2   # one screen wide, two screens tall (occ1 top half, occ2 bottom half)
+
+  walk(seq_len(nrow(windows)), function(i) {
+    w <- windows[i, ]
+    message("  window ", i, " of ", nrow(windows), ": ",
+            round(w$w_start/1000, 1), "-", round(w$w_end/1000, 1), "s (frame ", w$mid_frame, ")")
+
+    img_path <- file.path(frame_split_path, sprintf("frame_%04d.png", min(w$mid_frame, n_frames)))  # clamp into STILL freeze
+    out_path <- file.path(frame_merge_path, sprintf("window_%04d.png", i))
+    frame_img <- as.raster(readPNG(img_path))
+
+    g1 <- occ1 |> filter(window_idx == w$window_idx) |>
+      mutate(px = x, py = (SCREEN_HEIGHT - y) + SCREEN_HEIGHT)  # y-flip + shift into top half
+    g2 <- occ2 |> filter(window_idx == w$window_idx) |>
+      mutate(px = x, py = SCREEN_HEIGHT - y)  # y-flip only, bottom half
+
+    n_sub1 <- n_distinct(g1$sub_id)
+    n_sub2 <- n_distinct(g2$sub_id)
+
+    p <- ggplot() +
+      theme_void() +
+      theme(legend.position = "none",
+            panel.background = element_rect(fill = "white", color = NA),
+            plot.margin = margin(0, 0, 0, 0)) +
+      annotation_raster(frame_img, xmin = X_OFFSET, xmax = X_OFFSET + STIM_WIDTH,
+                         ymin = Y_OFFSET + SCREEN_HEIGHT, ymax = Y_OFFSET + STIM_HEIGHT + SCREEN_HEIGHT) +
+      annotation_raster(frame_img, xmin = X_OFFSET, xmax = X_OFFSET + STIM_WIDTH,
+                         ymin = Y_OFFSET, ymax = Y_OFFSET + STIM_HEIGHT) +
+      geom_hline(yintercept = SCREEN_HEIGHT, color = "grey40", linewidth = 0.5) +
+      annotate("text", x = 20, y = canvas_h - 20,
+               label = paste0("1st exposure  |  ", round(w$w_start/1000, 1), "-", round(w$w_end/1000, 1), "s"),
+               hjust = 0, vjust = 1, size = 5, color = "black") +
+      annotate("text", x = 20, y = SCREEN_HEIGHT - 20,
+               label = paste0("2nd exposure  |  ", round(w$w_start/1000, 1), "-", round(w$w_end/1000, 1), "s"),
+               hjust = 0, vjust = 1, size = 5, color = "black")
+
+    has_spread <- function(df) nrow(df) >= 3 && sd(df$px) > 0 && sd(df$py) > 0  # kde2d needs spread in both dims
+
+    if (has_spread(g1)) {
+      p <- tryCatch(
+        p + geom_hdr(data = g1, aes(px, py, fill = after_stat(probs)), alpha = 0.5,
+                      xlim = c(0, SCREEN_WIDTH), ylim = c(SCREEN_HEIGHT, canvas_h)),
+        error = function(e) { message("  window ", i, " occ1 density failed: ", e$message); p }
+      )
+    }
+    if (has_spread(g2)) {
+      p <- tryCatch(
+        p + geom_hdr(data = g2, aes(px, py, fill = after_stat(probs)), alpha = 0.5,
+                      xlim = c(0, SCREEN_WIDTH), ylim = c(0, SCREEN_HEIGHT)),
+        error = function(e) { message("  window ", i, " occ2 density failed: ", e$message); p }
+      )
+    }
+
+    p <- p +   # n= boxes added last so they always draw on top of the heatmap
+      annotate("rect", xmin = canvas_w - 170, xmax = canvas_w - 10,
+               ymin = canvas_h - 55, ymax = canvas_h - 10,
+               fill = "black", alpha = 0.55) +
+      annotate("text", x = canvas_w - 20, y = canvas_h - 20,
+               label = paste0("n = ", n_sub1),
+               hjust = 1, vjust = 1, size = 5, color = "white") +
+      annotate("rect", xmin = canvas_w - 170, xmax = canvas_w - 10,
+               ymin = SCREEN_HEIGHT - 55, ymax = SCREEN_HEIGHT - 10,
+               fill = "black", alpha = 0.55) +
+      annotate("text", x = canvas_w - 20, y = SCREEN_HEIGHT - 20,
+               label = paste0("n = ", n_sub2),
+               hjust = 1, vjust = 1, size = 5, color = "white")
+
+    p <- p +
+      scale_x_continuous(limits = c(0, canvas_w), expand = c(0, 0)) +
+      scale_y_continuous(limits = c(0, canvas_h), expand = c(0, 0)) +
+      coord_fixed()  # 1:1 aspect so the composited video isn't stretched
+
+    tryCatch(
+      ggsave(out_path, plot = p, width = canvas_w / 100, height = canvas_h / 100,
+             units = "in", dpi = 100),
+      error = function(e) message("  window ", i, " failed: ", e$message)
+    )
+  })
+
+  message("Compiling windows -> mp4 -> gif")
+  mp4_path <- file.path(output_folder, paste0(base_trial_type, "_occurrence_compare.mp4"))
+  gif_path <- file.path(output_folder, paste0(base_trial_type, "_occurrence_compare.gif"))
+  palette_path <- file.path(tempdir(), paste0(base_trial_type, "_palette.png"))
+
+  system(paste0(
+    'ffmpeg -y -framerate ', WINDOW_GIF_FPS, ' -i "', frame_merge_path, '/window_%04d.png" ',
+    '-c:v libx264 -vf format=yuv420p "', mp4_path, '"'
+  ))
+  system(paste0(   # optimized 256-color palette, better quality than ffmpeg's default gif encoder
+    'ffmpeg -y -i "', mp4_path, '" -vf "fps=', WINDOW_GIF_FPS, ',scale=', GIF_WIDTH, ':-1:flags=lanczos,palettegen" "',
+    palette_path, '"'
+  ))
+  system(paste0(
+    'ffmpeg -y -i "', mp4_path, '" -i "', palette_path, '" ',
+    '-filter_complex "fps=', WINDOW_GIF_FPS, ',scale=', GIF_WIDTH, ':-1:flags=lanczos[x];[x][1:v]paletteuse" "',
+    gif_path, '"'
+  ))
+
+  unlink(frame_split_path, recursive = TRUE)  # per-trial-type scratch, nothing left but final mp4/gif
+  unlink(frame_merge_path, recursive = TRUE)
+  message("Saved: ", gif_path)
+}
+```
+
+## Run
+
+Renders all 4 trial types' comparison GIFs (a full run takes a few
+minutes).
+
+```{r run-all}
+for (tt in names(video_map)) {
+  render_occurrence_comparison(tt)
+}
+
+message("\nAll done. GIFs in: ", output_folder)
+```
