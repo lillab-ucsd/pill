@@ -1,0 +1,117 @@
+---
+title: "Gaze Occurrence Comparison Gallery"
+output: html_document
+---
+
+## What this produces
+
+Reads the 4 MP4s produced by `x_group_heatmap_gifs.Rmd` (`data/leap_voe_data/gaze_heatmap_videos/gaze_occurrence/[trial_type]_occurrence_compare.mp4`), base64-encodes each one, and writes a single portable HTML file with them embedded inline as `<video>` data URIs (no external file dependencies -- the page can be opened, emailed, or moved anywhere on its own). Duck and shoe clips are laid out as expected/surprise pairs, side by side. Videos do NOT autoplay -- each starts on click via the native `<video>` controls.
+
+## Output
+
+`data/leap_voe_data/gaze_heatmap_videos/gaze_occurrence_comparison.html` (\~23MB, since base64 adds \~33% over the \~17MB of source MP4s combined).
+
+```{r setup}
+library(here)
+library(base64enc)
+```
+
+```{r paths}
+video_dir <- here("data", "leap_voe_data", "gaze_heatmap_videos", "gaze_occurrence")
+out_path  <- here("data", "leap_voe_data", "gaze_heatmap_videos", "leap_voe_fix_heatmaps.html")
+
+# Duck and shoe each get one row of expected | surprise, side by side.
+pairs <- list(
+  "Object Type 1 (Duck)" = c(Expected = "expected_duck", Surprise = "surprise_duck"),
+  "Object Type 2 (Shoe)" = c(Expected = "expected_shoe", Surprise = "surprise_shoe")
+)
+```
+
+`generation_info.csv` (written by `x_group_heatmap_gifs.Rmd`'s own last chunk) records when the videos were last rendered and how many distinct infants contributed a fixation to any of the 4 trial types -- read here for the page header. Falls back gracefully if that file is missing (e.g. this gallery script run against older videos, before that chunk existed).
+
+```{r generation-metadata}
+meta_path <- file.path(video_dir, "generation_info.csv")
+
+if (file.exists(meta_path)) {
+  meta <- read.csv(meta_path, stringsAsFactors = FALSE)
+  generated_date <- format(as.POSIXct(meta$generated_at[1], format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"), "%B %d, %Y")
+  n_infants_included <- meta$n_infants_included[1]
+} else {
+  generated_date <- "unknown"
+  n_infants_included <- "unknown"
+}
+```
+
+`video_tag()` embeds one clip; `group_section()` wraps a pair (expected + surprise) into one labeled row.
+
+```{r html-builders}
+video_tag <- function(slug, label) {
+  mp4_path <- file.path(video_dir, paste0(slug, "_occurrence_compare.mp4"))
+  b64 <- base64encode(mp4_path)
+  sprintf('
+      <div class="clip">
+        <h2>%s</h2>
+        <video controls loop muted playsinline>
+          <source src="data:video/mp4;base64,%s" type="video/mp4">
+        </video>
+      </div>', label, b64)
+}
+
+group_section <- function(group_label, clips) {
+  clip_html <- paste(mapply(video_tag, clips, names(clips)), collapse = "")
+  sprintf('
+    <section>
+      <h1 class="group-title">%s</h1>
+      <div class="pair">%s
+      </div>
+    </section>
+    ', group_label, clip_html)
+}
+```
+
+Build each group's HTML, assemble the full page, and write it out.
+
+```{r build-and-write}
+video_blocks <- paste(mapply(group_section, names(pairs), pairs, SIMPLIFY = FALSE), collapse = "")
+
+html <- sprintf('<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LEAP_VOE Gaze Heatmaps</title>
+<style>
+  body { font-family: Avenir, "Avenir Next", -apple-system, BlinkMacSystemFont, sans-serif; background: #111; color: #eee; margin: 0; padding: 24px 24px 48px; }
+  h1.page-title { font-weight: 500; margin: 0 0 8px; }
+  .meta { color: #999; font-size: 0.9em; margin: 0 0 24px; }
+  .meta p { margin: 0 0 2px; }
+  .intro { max-width: 760px; color: #ccc; line-height: 1.5; margin: 0 0 36px; }
+  .intro p { margin: 0 0 10px; }
+  section { margin-bottom: 40px; }
+  h1.group-title { font-weight: 500; font-size: 1.4em; margin: 0 0 12px; }
+  h2 { font-weight: 500; font-size: 1.05em; margin: 0 0 6px; color: #4a90e2; }
+  .pair { display: flex; flex-wrap: wrap; gap: 20px; }
+  .clip { flex: 1 1 460px; min-width: 320px; }
+  video { width: 100%%; display: block; border-radius: 6px; }
+</style>
+</head>
+<body>
+<h1 class="page-title">LEAP_VOE Gaze Heatmaps</h1>
+<div class="meta">
+<p>Authors: AJ Haskins and Tori Hennessy</p>
+<p>Dates Videos Generated: %s</p>
+<p>Total Number of Infants Included: %s</p>
+</div>
+<div class="intro">
+<p>Each video is a stacked comparison of infants\' 1st test trial (top panel) vs. their 2nd test trial (bottom panel). In the LEAP_VOE experiment, infants see 2 familiarization trials followed by 4 test trials. </p>
+<p>The heatmap overlay is a group-level (all subjects pooled) fixation density, computed over a sliding 2s time window that steps forward every 0.5s, composited over the video frame at each window\'s midpoint -- not a raw per-frame gaze trace. Windows run through movie playback and continue into the coding window, which lasts until each infant looks away (2s threshold) or 30s have passed. 
+
+</p> The "n = " label in the top-right of each panel is the number of subjects with a fixation in that specific window; it shrinks over the course of the clip as infants look away.</p>
+</div>
+%s
+</body>
+</html>
+', generated_date, n_infants_included, video_blocks)
+
+writeLines(html, out_path)
+message("Wrote ", out_path, " (", round(file.size(out_path) / 1e6, 1), " MB)")
+```

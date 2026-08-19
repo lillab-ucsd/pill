@@ -495,3 +495,21 @@ for (tt in names(video_map)) {
 
 message("\nAll done. GIFs in: ", output_folder)
 ```
+
+Writes a small metadata sidecar (`generation_info.csv`, in `output_folder`)
+recording when this run happened and how many distinct infants
+contributed a fixation to any of the 4 rendered trial types -- consumed
+by `x_gaze_occurrence_gallery.Rmd` for its "generated on" / "infants
+included" header text.
+
+```{r write-metadata}
+n_infants_included <- all_fixations |>
+  filter(str_remove(trial_type, "_[12]$") %in% names(video_map)) |>
+  distinct(sub_id) |>
+  nrow()
+
+tibble(generated_at = Sys.time(), n_infants_included = n_infants_included) |>
+  write_csv(file.path(output_folder, "generation_info.csv"))
+
+message("Infants included across all 4 test trial types: ", n_infants_included)
+```
