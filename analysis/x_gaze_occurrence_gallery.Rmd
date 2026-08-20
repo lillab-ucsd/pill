@@ -103,7 +103,7 @@ html <- sprintf('<!DOCTYPE html>
 </div>
 <div class="intro">
 <p>Each video is a stacked comparison of infants\' 1st test trial (top panel) vs. their 2nd test trial (bottom panel). In the LEAP_VOE experiment, infants see 2 familiarization trials followed by 4 test trials. </p>
-<p>The heatmap overlay is a group-level (all subjects pooled) fixation density, computed over a sliding 2s time window that steps forward every 0.5s, composited over the video frame at each window\'s midpoint -- not a raw per-frame gaze trace. Windows run through movie playback and continue into the coding window, which lasts until each infant looks away (2s threshold) or 30s have passed. 
+<p>The heatmap overlay is a group-level (all subjects pooled) fixation density, computed over a sliding 2s time window that steps forward every 0.2s, composited over the video frame at each window\'s midpoint -- not a raw per-frame gaze trace. Windows run through movie playback and continue into the coding window, which lasts until each infant looks away (2s threshold) or 30s have passed. 
 
 </p> The "n = " label in the top-right of each panel is the number of subjects with a fixation in that specific window; it shrinks over the course of the clip as infants look away.</p>
 </div>

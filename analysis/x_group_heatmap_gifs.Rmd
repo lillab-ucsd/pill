@@ -141,7 +141,7 @@ FRAME_RATE   <- 30   # stimulus mp4s' actual encoded fps
 MS_PER_FRAME <- 1000 / FRAME_RATE
 
 WINDOW_SEC <- 2     # sliding window width, seconds
-STEP_SEC   <- 0.5   # window step size, seconds (overlap = WINDOW_SEC - STEP_SEC)
+STEP_SEC   <- 0.2   # window step size, seconds (overlap = WINDOW_SEC - STEP_SEC)
 TICK_MS    <- 20    # duration-weighting granularity: ms of overlap per repeated point
 
 SCREEN_WIDTH  <- 1920
