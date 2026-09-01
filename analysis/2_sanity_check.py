@@ -270,6 +270,110 @@ def main():
             subs = ", ".join(sel.index) if len(sel) else "-"
             print(f"    {label:>8}  {len(sel):>2} subj ({len(sel)/len(per):>5.1%})  {subs}")
 
+    return df, cap if caps else None
+
+
+def make_figure(df, cap, out_name="voe_sanity_check.png"):
+    """
+    Two-panel summary figure for sharing: validity per subject per trial (heatmap) beside the
+    human coder vs eye tracker comparison (paired bars). STILL trials only, since that is the
+    only phase the coder actively codes.
+
+    Both panels share a y axis and are sorted by capture, so a row is the same subject in each.
+    Font falls back through Avenir -> Helvetica -> Nimbus Sans, so it picks up Avenir on a Mac
+    and a metric-compatible Helvetica clone elsewhere.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.gridspec import GridSpec
+
+    val = df[df.trial % 2 == 0].pivot(index="subject", columns="trial", values="validity")
+    on = cap[cap.looking == 1].groupby("subject").agg(coded_s=("coded_s", "sum"),
+                                                      valid_s=("valid_s", "sum"))
+    on["capture"] = on.valid_s / on.coded_s
+    order = on.capture.sort_values(ascending=False).index
+    val, on = val.reindex(order), on.reindex(order)
+
+    # STILL trials 2,4,6,8,10,12 are the freeze windows for fam 1-2 then test 1-4
+    LABELS = ["Fam 1", "Fam 2", "Test 1", "Test 2", "Test 3", "Test 4"]
+    cmap = LinearSegmentedColormap.from_list(
+        "coolvalid", ["#f2f8f9", "#cbe6ec", "#8ccbd5", "#4a9dae", "#26788a", "#175a5e", "#0e3f3a"])
+    TEAL, PALE = "#26788a", "#cfe3e7"
+    plt.rcParams.update({
+        "font.family": ["Avenir", "Avenir Next", "Helvetica", "Helvetica Neue",
+                        "Nimbus Sans", "DejaVu Sans"],
+        "font.size": 10, "axes.titlesize": 10, "axes.labelsize": 10,
+        "xtick.labelsize": 10, "ytick.labelsize": 10, "legend.fontsize": 10})
+
+    fig = plt.figure(figsize=(11, 9.2), dpi=200)
+    gs = GridSpec(1, 2, width_ratios=[1, 0.78], wspace=0.10,
+                  left=0.075, right=0.865, top=0.90, bottom=0.215)
+
+    # ---- left: validity heatmap ----
+    ax = fig.add_subplot(gs[0, 0])
+    im = ax.imshow(val.values, cmap=cmap, vmin=0, vmax=1, aspect="auto", interpolation="nearest")
+    ax.set_xticks(range(len(val.columns))); ax.set_xticklabels(LABELS)
+    ax.set_yticks(range(len(val.index))); ax.set_yticklabels(val.index, fontsize=7)
+    ax.set_xlabel("Trials*", labelpad=8)
+    ax.text(0, -0.088,
+            "Proportion of raw 250 Hz samples in each trial window where the tracker detected at\n"
+            "least one eye. Covers the whole trial duration, whether or not the infant was coded as\n"
+            "looking by experimenter. The panel on the right restricts valid gaze samples to\n"
+            "coder-confirmed looking bouts.",
+            transform=ax.transAxes, fontsize=8, color="#5d6f74", va="top", linespacing=1.5)
+    ax.text(1.0, 1.012, f"mean validity = {val.stack().mean():.2f}", transform=ax.transAxes,
+            ha="right", va="bottom", fontsize=10, color=TEAL, fontweight="bold")
+    ax.set_ylabel("Subject", labelpad=6)
+    ax.set_title("Eye Tracker Validity Per Trial", loc="left", pad=10)
+    ax.tick_params(length=0)
+    for s in ax.spines.values():
+        s.set_visible(False)
+
+    cax = fig.add_axes([0.885, 0.46, 0.016, 0.30])
+    cb = fig.colorbar(im, cax=cax); cb.outline.set_visible(False)
+    cb.set_label("proportion of samples\nwith >=1 valid eye", labelpad=10)
+
+    # ---- right: coder vs tracker, seconds ----
+    # Pale bar is the coder's looking total; teal is the subset the tracker actually recorded,
+    # so the visible gap is what was missed rather than two independent quantities.
+    ax2 = fig.add_subplot(gs[0, 1], sharey=ax)
+    y = np.arange(len(on.index))
+    b1 = ax2.barh(y, on.coded_s, color=PALE, height=0.74, zorder=1,
+                  label="Coder*:  total looking duration across trials (s)")
+    b2 = ax2.barh(y, on.valid_s, color=TEAL, height=0.74, zorder=2,
+                  label="Eye tracker:  of that, seconds with >=1 valid eye detected (s)")
+    ax2.set_xlabel("Seconds", labelpad=8)
+    ax2.tick_params(labelleft=False, length=0)
+    ax2.grid(axis="x", color="#edf2f3", lw=0.9); ax2.set_axisbelow(True)
+    for s in ax2.spines.values():
+        s.set_visible(False)
+    ax2.set_title("Human Coder vs. Eye Tracker", loc="left", pad=10)
+    ax2.text(1.0, 1.012, f"mean capture = {on.capture.mean():.0%}", transform=ax2.transAxes,
+             ha="right", va="bottom", fontsize=10, color=TEAL, fontweight="bold")
+    for i, c in enumerate(on.capture):
+        if np.isfinite(c):
+            ax2.text(on.coded_s.iloc[i] + 4, i, f"{c:.0%}", va="center", fontsize=6.5, color="#5d6f74")
+    ax2.legend(handles=[b1, b2], frameon=False, loc="upper left", bbox_to_anchor=(-0.02, -0.062),
+               ncol=1, handlelength=1.5, handleheight=1.1, handletextpad=0.9, labelspacing=0.45)
+
+    fig.suptitle("LEAP_VOE Sanity Check", x=0.075, y=0.965, ha="left",
+                 fontsize=13, fontweight="bold")
+    fig.text(0.075, 0.018,
+             "*Based on online coded data to align raw gaze clock with event timing.\n"
+             f"*Coding window only (marked as STILL trials in data). n = {len(val)} subjects\n"
+             "mean validity  =  mean across subjects of ( samples with >=1 valid eye / all samples in the trial window )\n"
+             "mean capture   =  mean across subjects of ( seconds with >=1 valid eye during coded looking / seconds coded as looking )",
+             fontsize=8, color="#5d6f74", linespacing=1.6)
+
+    out = script_dir / out_name
+    fig.savefig(out, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"\nsaved figure: {out.relative_to(project_root)}")
+
 
 if __name__ == "__main__":
-    main()
+    df, cap = main()
+    if cap is not None:
+        make_figure(df, cap)
