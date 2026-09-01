@@ -1,6 +1,10 @@
 # ignore system files
 .DS_Store
 
+# ignore python bytecode caches (regenerate on every import)
+__pycache__/
+*.pyc
+
 #ignore venv specific stuff
 .vscode/settings.json
 .Rproj.user
@@ -8,3 +12,4 @@
 # ignore big files
 voe_gaze_combined.csv
 data/leap_voe_data/gaze_heatmap_videos/
+stimuli/pill_stimuli/
