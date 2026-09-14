@@ -1,0 +1,17 @@
+condition,task_1,task_2,first_test_type
+1,support,goal,expected
+2,support,goal,unexpected
+3,goal,support,expected
+4,goal,support,unexpected
+5,support,efficiency,expected
+6,support,efficiency,unexpected
+7,efficiency,support,expected
+8,efficiency,support,unexpected
+9,permanence,goal,expected
+10,permanence,goal,unexpected
+11,goal,permanence,expected
+12,goal,permanence,unexpected
+13,permanence,efficiency,expected
+14,permanence,efficiency,unexpected
+15,efficiency,permanence,expected
+16,efficiency,permanence,unexpected
