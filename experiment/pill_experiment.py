@@ -68,7 +68,7 @@ def setup_eyetracker():
         return None
     return trackers[0]
 
-
+# madison work on this function first!
 def gaze_data_callback(gaze_data, gaze_file):
     # todo: write gaze sample to gaze_file with shared clock reference
     pass
