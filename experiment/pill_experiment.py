@@ -71,7 +71,38 @@ def setup_eyetracker():
 # madison work on this function first!
 def gaze_data_callback(gaze_data, gaze_file):
     # todo: write gaze sample to gaze_file with shared clock reference
-    pass
+    global current_subject_id, current_condition, current_trial
+    global gaze_writer, gaze_file_handle
+
+    if gaze_writer is None:
+        timestamp = datetime.now().strftime("%Y%m%d")
+        data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+        os.makedirs(data_dir, exist_ok=True)
+        path = os.path.join(data_dir, f"{current_subject_id}_{timestamp}.csv")
+
+        gaze_file_handle = open(path, 'w', newline='')
+        gaze_writer = csv.DictWriter(
+            gaze_file_handle,
+            fieldnames=['snum', 'months', 'days', 'sex', 'cond', 'GNG', 'gazeOnOff',
+                        'trial', 'trialType', 'startTime', 'endTime', 'duration']
+        )
+        gaze_writer.writeheader()
+
+    gaze_writer.writerow({
+        'snum': current_subject_id,
+        'months': # TBD ,
+        'days': # TBD ,
+        'sex': # TBD ,
+        'cond': current_condition,
+        'GNG': # TBD ,
+        'gazeOnOff': # TBD ,
+        'trial': current_trial,
+        'trialType': # TBD ,
+        'startTime': core.getTime(),
+        'endTime': core.getTime(),
+        'duration': # TBD ,
+    })
+    gaze_file_handle.flush()
 
 
 def get_trial_order(condition):
