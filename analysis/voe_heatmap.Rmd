@@ -33,7 +33,7 @@ STIM_HEIGHT   <- 996   # AOI height as told to PyHab
 X_OFFSET      <- (SCREEN_WIDTH - STIM_WIDTH) / 2   # 75
 Y_OFFSET      <- (SCREEN_HEIGHT - STIM_HEIGHT) / 2 # 42
 
-stimuli_path  <- here("stimuli", "leap_voe_stimuli", "videos", "with_borders")
+stimuli_path  <- here("analysis", "leap_voe_stimuli", "videos", "with_borders")
 gaze_csv_dir  <- here("data", "leap_voe_data", "raw_gaze", "csv")
 timing_dir    <- here("data", "leap_voe_data", "raw_events", "timing")
 output_folder <- here("data", "leap_voe_data", "gaze_heatmap_videos")

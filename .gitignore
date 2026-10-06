@@ -14,3 +14,6 @@ voe_gaze_combined.csv
 data/leap_voe_data/gaze_heatmap_videos/
 # stimuli/pill_stimuli/
 3_visualizations_backup.Rmd.bak
+
+# leap voe stimuli (local only)
+analysis/leap_voe_stimuli/

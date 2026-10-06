@@ -161,7 +161,7 @@ into a `gaze_occurrence` subfolder of the existing heatmap output
 directory.
 
 ```{r paths}
-stimuli_path   <- here("stimuli", "leap_voe_stimuli", "videos", "with_borders")
+stimuli_path   <- here("analysis", "leap_voe_stimuli", "videos", "with_borders")
 fixations_dir  <- here("data", "leap_voe_data", "fixations")
 timing_dir     <- here("data", "leap_voe_data", "raw_events", "timing")
 output_folder  <- here("data", "leap_voe_data", "gaze_heatmap_videos", "gaze_occurrence")
