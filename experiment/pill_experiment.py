@@ -3,11 +3,11 @@ Author(s): Tori Hennessy, Madison Wolfe, AJ Haskins
 Description: This is the PILL experiment code. 
 """
 
-from psychopy import visual, core, event, gui, logging
+from psychopy import core, gui, logging  # visual and event load in main(), after the dialog (slow import)
 import tobii_research as tr
 import os
 import csv
-from datetime import datetime
+import multiprocessing
 
 
 ######## Settings ########
@@ -19,10 +19,15 @@ ATTENTION_GETTERS = [
     os.path.join(STIMULI_DIR, "attention_getters", "crazy_swirl.mp4"),
     os.path.join(STIMULI_DIR, "attention_getters", "crystal_ball.mp4"),
 ]
+SNAIL_IMAGE = os.path.join(STIMULI_DIR, "snail.png")  # loading screen image
+BG_COLOR = "#e6e0f8"  # light lavender, loading/start/end screen background
+END_SCREEN_SECONDS = 5  # how long "All done!" stays up
+KID_FONT = "Georgia"  # start/end screen font, built into mac and windows
 
 # coding window / attention getter timing (seconds)
 MAX_CODING_WINDOW = 30
 LOOK_AWAY_THRESHOLD = 2
+SNAIL_INTERVAL = 1.0  # seconds between new snails on the loading screen
 
 # trials per task
 N_FAM_TRIALS = 4
@@ -40,6 +45,13 @@ EVENT_COLS = [
     "coding_window", "ag", "gazeOnOff", "startTime", "endTime", "duration",
 ]
 MISSING_SECONDS = 10  # print warning if no valid gaze for this long
+
+# hides ffmpeg/swscaler warnings from video playback, keeps decode errors visible
+try:
+    from ffpyplayer.tools import set_loglevel
+    set_loglevel("error")
+except ImportError:
+    pass
 
 
 ######## Eye Tracker ########
@@ -98,6 +110,61 @@ def gaze_data_callback(gaze_data):
         gaze_warned = True  # warn only once
 
 
+######## Loading Screen ########
+
+def get_screen_rect(screen_index):
+    # position and size of the monitor psychopy will use, from pyglet
+    import pyglet
+    try:
+        screens = pyglet.canvas.get_display().get_screens()
+    except AttributeError:  # newer pyglet moved this
+        screens = pyglet.display.get_display().get_screens()
+    screen = screens[screen_index] if screen_index < len(screens) else screens[0]
+    return screen.x, screen.y, screen.width, screen.height
+
+
+def run_loading_screen(screen_index, image_path, interval):
+    # runs in its own process: adds a snail at a random spot every interval until stopped
+    import random
+    import tkinter as tk
+    x, y, w, h = get_screen_rect(screen_index)
+    root = tk.Tk()
+    root.overrideredirect(True)  # no border or title bar
+    root.geometry(f"{w}x{h}+{x}+{y}")
+    root.attributes("-topmost", True)
+    canvas = tk.Canvas(root, width=w, height=h, bg=BG_COLOR, highlightthickness=0)
+    canvas.pack()
+    snail = tk.PhotoImage(file=image_path)
+
+    # grid of snail-sized cells, filled in random order so snails never overlap
+    cell_w, cell_h = snail.width() + 40, snail.height() + 40  # 40 px gap between snails
+    cols, rows = w // cell_w, h // cell_h
+    x0, y0 = (w - cols * cell_w) // 2, (h - rows * cell_h) // 2  # centers the grid
+    cells = [(c, r) for c in range(cols) for r in range(rows)]
+    random.shuffle(cells)
+
+    def add_snail():
+        if not cells:
+            return  # screen is full
+        c, r = cells.pop()
+        cx = x0 + c * cell_w + cell_w // 2 + random.randint(-15, 15)  # small jitter
+        cy = y0 + r * cell_h + cell_h // 2 + random.randint(-15, 15)
+        canvas.create_image(cx, cy, image=snail)
+        root.after(int(interval * 1000), add_snail)
+
+    add_snail()
+    root.mainloop()
+
+
+def start_loading_screen():
+    # daemon process, so it also closes if the main script crashes
+    proc = multiprocessing.Process(
+        target=run_loading_screen, args=(SCREEN_INDEX, SNAIL_IMAGE, SNAIL_INTERVAL), daemon=True
+    )
+    proc.start()
+    return proc
+
+
 ######## Session Setup ########
 
 def get_session_info():
@@ -139,12 +206,11 @@ def setup_data_files(subject_id, cond, use_eyetracker):
     sub_id, condition = subject_id, cond
     data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
     os.makedirs(data_dir, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    event_file = open(os.path.join(data_dir, f"{sub_id}_{stamp}_events.csv"), "w", newline="")
+    event_file = open(os.path.join(data_dir, f"{sub_id}_events.csv"), "w", newline="")
     event_writer = csv.DictWriter(event_file, fieldnames=EVENT_COLS)
     event_writer.writeheader()
     if use_eyetracker:
-        gaze_path = os.path.join(data_dir, f"{sub_id}_{stamp}_gaze.csv")
+        gaze_path = os.path.join(data_dir, f"{sub_id}_gaze.csv")
 
 
 def write_row(event_name, start, end, coding_window=0, ag=0, gaze_on_off=None):
@@ -171,8 +237,9 @@ def close_data_files():
 
 
 def quit_session(win):
-    # closes data files and the window, then exits
+    # closes data files, shows the end screen, then exits
     close_data_files()
+    end_screen(win)
     win.close()
     core.quit()
 
@@ -229,13 +296,36 @@ def attention_getter(win):
             keys = event.getKeys(keyList=["x", "space", "r"])  # single call: getKeys clears the whole buffer
             if "x" in keys or "space" in keys:
                 write_row(ag_name, ag_start, core.getTime(), ag=1)
+                movie.stop()  # stops AG audio
                 if "x" in keys:
                     quit_session(win)
                 return
             if "r" in keys:
+                movie.stop()  # stop before replaying
                 break  # rebuild the movie and replay from the top
             movie.draw()
             win.flip()
+
+
+def show_message(win, text):
+    # lavender background with centered text, used by start_screen and end_screen
+    visual.Rect(win, width=2, height=2, units="norm", fillColor=BG_COLOR, lineColor=BG_COLOR).draw()
+    visual.TextStim(win, text=text, font=KID_FONT, color="black", height=0.12, units="norm").draw()
+    win.flip()
+
+
+def start_screen(win, loading):
+    # "Ready to start!" replaces the snails, waits for space (x quits)
+    show_message(win, "Ready to start!")
+    loading.terminate()  # close the snails once this screen is up
+    if "x" in event.waitKeys(keyList=["space", "x"]):
+        quit_session(win)
+
+
+def end_screen(win):
+    # "All done!" for END_SCREEN_SECONDS, like the visual learning script
+    show_message(win, "All done!")
+    core.wait(END_SCREEN_SECONDS)
 
 
 ######## Trial Flow ########
@@ -246,6 +336,7 @@ def coding_window(win, video_name):
     global trigger
     print("[pill] CODING WINDOW STARTS NOW!")
     trigger = "start_coding"
+    event.clearEvents(eventType="keyboard")  # ignore presses made before the window
     window_start = core.getTime()
     seg_start = window_start
     looking = 1  # infant counts as looking until the first space press
@@ -285,6 +376,9 @@ def run_trial(win, task, trial_type, trial_number):
 
 def main():
     info = get_session_info()
+    loading = start_loading_screen()  # snails while psychopy loads
+    global visual, event
+    from psychopy import visual, event  # ~17 s on the mac, so loaded after the dialog
     trial_order = get_trial_order(info["condition"])
     setup_data_files(info["subject_id"], info["condition"], info["use_eyetracker"])
     tracker = setup_eyetracker() if info["use_eyetracker"] else None
@@ -293,6 +387,7 @@ def main():
 
     win = visual.Window(size=SCREEN_SIZE, screen=SCREEN_INDEX, fullscr=True, color="black", units="norm")
     print(f"[pill] requested {SCREEN_SIZE}, actual window size {tuple(win.size)}")
+    start_screen(win, loading)
 
     if tracker is not None:
         start_eyetracker(tracker)  # records through the whole session
@@ -306,6 +401,7 @@ def main():
     finally:
         close_data_files()
 
+    end_screen(win)
     win.close()
     core.quit()
 
