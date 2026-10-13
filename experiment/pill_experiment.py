@@ -1,9 +1,9 @@
 """
 Author(s): Tori Hennessy
-Description: This is the PILL experiment code. 
+Description: This is the PILL experiment code.
 """
 
-from psychopy import core, gui, logging 
+from psychopy import core, gui, logging
 import tobii_research as tr
 import os
 import csv
@@ -181,8 +181,10 @@ def close_data_files():
 
 
 def quit_session(win):
-    # closes data files, shows the end screen, then exits
+    # closes data files, stops any playing video, shows the end screen, then exits
     close_data_files()
+    for movie in movies.values():
+        movie.pause()  # so no video audio plays over the end screen
     end_screen(win)
     win.close()
     core.quit()
@@ -191,6 +193,7 @@ def quit_session(win):
 ######## Stimuli ########
 
 _ag_index = 0  # alternates which AG video plays next between trials
+movies = {}  # video path -> movie, each opened once in load_movies (same approach as PyHab)
 
 
 def get_video_path(task, trial_type):
@@ -206,6 +209,23 @@ def get_next_attention_getter():
     return video_path
 
 
+def load_movies(win, tasks):
+    # opens every video for this session once, before the start screen.
+    # opening/unloading players mid-session crashed or lagged on windows
+    paths = [get_video_path(task, t) for task in tasks for t in TYPE_MAP] + ATTENTION_GETTERS
+    for path in paths:
+        movies[path] = visual.MovieStim(
+            win, path, loop=path in ATTENTION_GETTERS, units="norm", size=(2, 2)  # fills the 16:9 screen
+        )
+    print(f"[pill] loaded {len(movies)} videos")
+
+
+def rewind(movie):
+    # stops playback (and audio) and goes back to the start for the next play
+    movie.pause()
+    movie.seek(0.0)
+
+
 def check_exit_key(win):
     # "x" exits the experiment immediately
     if "x" in event.getKeys(keyList=["x"]):
@@ -214,7 +234,7 @@ def check_exit_key(win):
 
 def play_video(win, video_path):
     # plays video to completion, leaves last frame on screen
-    movie = visual.MovieStim(win, video_path, loop=False, units="norm", size=(2, 2))  # fills the 16:9 screen
+    movie = movies[video_path]
     movie.play()
     clock = core.Clock()
     print(f"[pill] playing {os.path.basename(video_path)}")
@@ -224,31 +244,30 @@ def play_video(win, video_path):
         win.flip()
     movie.draw()
     win.flip()
+    rewind(movie)  # last frame stays on screen until the next flip
     print(f"[pill] video finished after {clock.getTime():.1f}s")
 
 
 def attention_getter(win):
-    # loops the AG video; space advances to the next trial, r replays it
+    # loops the AG video until space advances to the next trial
     global trigger
     video_path = get_next_attention_getter()
+    movie = movies[video_path]
     ag_name = os.path.basename(video_path)
+    event.clearEvents(eventType="keyboard")  # drop earlier presses so space must be pressed now
     trigger = "start_ag"
     ag_start = core.getTime()
+    movie.play()
     while True:
-        movie = visual.MovieStim(win, video_path, loop=True, units="norm", size=(2, 2))
-        while True:
-            keys = event.getKeys(keyList=["x", "space", "r"])  # single call: getKeys clears the whole buffer
-            if "x" in keys or "space" in keys:
-                write_row(ag_name, ag_start, core.getTime(), ag=1)
-                movie.stop()  # stops AG audio
-                if "x" in keys:
-                    quit_session(win)
-                return
-            if "r" in keys:
-                movie.stop()  # stop before replaying
-                break  # rebuild the movie and replay from the top
-            movie.draw()
-            win.flip()
+        keys = event.getKeys(keyList=["x", "space"])  # single call: getKeys clears the whole buffer
+        if "x" in keys or "space" in keys:
+            write_row(ag_name, ag_start, core.getTime(), ag=1)
+            rewind(movie)  # stops AG audio, ready for next time
+            if "x" in keys:
+                quit_session(win)
+            return
+        movie.draw()
+        win.flip()
 
 
 def show_message(win, text):
@@ -362,13 +381,15 @@ def main():
     if sys.platform == "darwin":
         guard_mac_events(win)
 
+    tasks = [trial_order["task_1"], trial_order["task_2"]]
+    load_movies(win, tasks)  # all videos open once, before the start screen
     start_screen(win)
 
     if tracker is not None:
         start_eyetracker(tracker)  # records through the whole session
     try:
         # each task runs all its trials before the next task starts
-        for task in [trial_order["task_1"], trial_order["task_2"]]:
+        for task in tasks:
             sequence = get_task_trial_sequence(trial_order["first_test_type"])
             for i, trial_type in enumerate(sequence, start=1):
                 print(f"[pill] {task} trial {i}/{len(sequence)}: {trial_type}")
