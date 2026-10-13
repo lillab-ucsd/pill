@@ -1,13 +1,13 @@
 """
-Author(s): Tori Hennessy, Madison Wolfe, AJ Haskins
+Author(s): Tori Hennessy
 Description: This is the PILL experiment code. 
 """
 
-from psychopy import core, gui, logging  # visual and event load in main(), after the dialog (slow import)
+from psychopy import core, gui, logging 
 import tobii_research as tr
 import os
 import csv
-import multiprocessing
+import sys
 
 
 ######## Settings ########
@@ -19,15 +19,14 @@ ATTENTION_GETTERS = [
     os.path.join(STIMULI_DIR, "attention_getters", "crazy_swirl.mp4"),
     os.path.join(STIMULI_DIR, "attention_getters", "crystal_ball.mp4"),
 ]
-SNAIL_IMAGE = os.path.join(STIMULI_DIR, "snail.png")  # loading screen image
-BG_COLOR = "#e6e0f8"  # light lavender, loading/start/end screen background
+BG_COLOR = "#d9ccfd"  # light lavender, start/end screen background
 END_SCREEN_SECONDS = 5  # how long "All done!" stays up
 KID_FONT = "Georgia"  # start/end screen font, built into mac and windows
 
 # coding window / attention getter timing (seconds)
 MAX_CODING_WINDOW = 30
 LOOK_AWAY_THRESHOLD = 2
-SNAIL_INTERVAL = 1.0  # seconds between new snails on the loading screen
+LOOK_KEY = "B"  # coder holds this key while the infant is looking
 
 # trials per task
 N_FAM_TRIALS = 4
@@ -108,61 +107,6 @@ def gaze_data_callback(gaze_data):
     elif t - last_valid_time > MISSING_SECONDS and not gaze_warned:
         print(f"[pill] WARNING: No gaze data in the last {MISSING_SECONDS} seconds")
         gaze_warned = True  # warn only once
-
-
-######## Loading Screen ########
-
-def get_screen_rect(screen_index):
-    # position and size of the monitor psychopy will use, from pyglet
-    import pyglet
-    try:
-        screens = pyglet.canvas.get_display().get_screens()
-    except AttributeError:  # newer pyglet moved this
-        screens = pyglet.display.get_display().get_screens()
-    screen = screens[screen_index] if screen_index < len(screens) else screens[0]
-    return screen.x, screen.y, screen.width, screen.height
-
-
-def run_loading_screen(screen_index, image_path, interval):
-    # runs in its own process: adds a snail at a random spot every interval until stopped
-    import random
-    import tkinter as tk
-    x, y, w, h = get_screen_rect(screen_index)
-    root = tk.Tk()
-    root.overrideredirect(True)  # no border or title bar
-    root.geometry(f"{w}x{h}+{x}+{y}")
-    root.attributes("-topmost", True)
-    canvas = tk.Canvas(root, width=w, height=h, bg=BG_COLOR, highlightthickness=0)
-    canvas.pack()
-    snail = tk.PhotoImage(file=image_path)
-
-    # grid of snail-sized cells, filled in random order so snails never overlap
-    cell_w, cell_h = snail.width() + 40, snail.height() + 40  # 40 px gap between snails
-    cols, rows = w // cell_w, h // cell_h
-    x0, y0 = (w - cols * cell_w) // 2, (h - rows * cell_h) // 2  # centers the grid
-    cells = [(c, r) for c in range(cols) for r in range(rows)]
-    random.shuffle(cells)
-
-    def add_snail():
-        if not cells:
-            return  # screen is full
-        c, r = cells.pop()
-        cx = x0 + c * cell_w + cell_w // 2 + random.randint(-15, 15)  # small jitter
-        cy = y0 + r * cell_h + cell_h // 2 + random.randint(-15, 15)
-        canvas.create_image(cx, cy, image=snail)
-        root.after(int(interval * 1000), add_snail)
-
-    add_snail()
-    root.mainloop()
-
-
-def start_loading_screen():
-    # daemon process, so it also closes if the main script crashes
-    proc = multiprocessing.Process(
-        target=run_loading_screen, args=(SCREEN_INDEX, SNAIL_IMAGE, SNAIL_INTERVAL), daemon=True
-    )
-    proc.start()
-    return proc
 
 
 ######## Session Setup ########
@@ -314,10 +258,9 @@ def show_message(win, text):
     win.flip()
 
 
-def start_screen(win, loading):
-    # "Ready to start!" replaces the snails, waits for space (x quits)
+def start_screen(win):
+    # "Ready to start!" until space is pressed (x quits)
     show_message(win, "Ready to start!")
-    loading.terminate()  # close the snails once this screen is up
     if "x" in event.waitKeys(keyList=["space", "x"]):
         quit_session(win)
 
@@ -330,31 +273,40 @@ def end_screen(win):
 
 ######## Trial Flow ########
 
+# held-key tracking (set up in main once the window exists)
+pyglet_key = None
+key_state = None
+
+
 def coding_window(win, video_name):
-    # space toggles look away/back, one events row per gaze on/off episode.
+    # LOOK_KEY held = looking, released = look away. one events row per gaze on/off episode.
     # returns True if a look-away lasted LOOK_AWAY_THRESHOLD (AG needed).
     global trigger
     print("[pill] CODING WINDOW STARTS NOW!")
     trigger = "start_coding"
     event.clearEvents(eventType="keyboard")  # ignore presses made before the window
+    look_key = getattr(pyglet_key, LOOK_KEY)
     window_start = core.getTime()
     seg_start = window_start
-    looking = 1  # infant counts as looking until the first space press
+    looking = int(key_state[look_key])  # starts as whatever the key is doing now
+    has_looked = looking == 1  # no auto-advance until B has been held at least once
 
     def close_segment(end):
         write_row(video_name, seg_start, end, coding_window=1, gaze_on_off=looking)
 
     while core.getTime() - window_start < MAX_CODING_WINDOW:
-        keys = event.getKeys(keyList=["x", "space"])  # single call: getKeys clears the whole buffer
+        win.winHandle.dispatch_events()  # updates key_state without a flip
         now = core.getTime()
-        if "x" in keys:
+        if "x" in event.getKeys(keyList=["x"]):
             close_segment(now)
             quit_session(win)
-        for _ in range(keys.count("space")):  # count, in case two presses land in one poll
+        held = int(key_state[look_key])
+        if held != looking:
             close_segment(now)
-            seg_start, looking = now, 1 - looking
-            print("[pill] infant looked back" if looking else "[pill] look away")
-        if looking == 0 and now - seg_start >= LOOK_AWAY_THRESHOLD:
+            seg_start, looking = now, held
+            has_looked = has_looked or held == 1
+            print("[pill] infant is looking" if looking else "[pill] look away!")
+        if has_looked and looking == 0 and now - seg_start >= LOOK_AWAY_THRESHOLD:
             print("[pill] look-away confirmed, starting attention getter")
             close_segment(now)
             return True
@@ -374,9 +326,23 @@ def run_trial(win, task, trial_type, trial_number):
         attention_getter(win)
 
 
+def guard_mac_events(win):
+    # mac only: pyglet sometimes gets a bad event while keys are pressed and crashes
+    # this is annoying af if you are trying to test on a mac, so this handles it
+    # wraps the window's event pump so that event is skipped instead
+    original = win.winHandle.dispatch_events
+
+    def safe_dispatch():
+        try:
+            original()
+        except AttributeError:
+            pass  # skip the bad event
+
+    win.winHandle.dispatch_events = safe_dispatch
+
+
 def main():
     info = get_session_info()
-    loading = start_loading_screen()  # snails while psychopy loads
     global visual, event
     from psychopy import visual, event  # ~17 s on the mac, so loaded after the dialog
     trial_order = get_trial_order(info["condition"])
@@ -387,7 +353,16 @@ def main():
 
     win = visual.Window(size=SCREEN_SIZE, screen=SCREEN_INDEX, fullscr=True, color="black", units="norm")
     print(f"[pill] requested {SCREEN_SIZE}, actual window size {tuple(win.size)}")
-    start_screen(win, loading)
+
+    # track held keys directly through pyglet (psychopy's event module only sees key presses)
+    global pyglet_key, key_state
+    from pyglet.window import key as pyglet_key
+    key_state = pyglet_key.KeyStateHandler()
+    win.winHandle.push_handlers(key_state)
+    if sys.platform == "darwin":
+        guard_mac_events(win)
+
+    start_screen(win)
 
     if tracker is not None:
         start_eyetracker(tracker)  # records through the whole session
