@@ -15,8 +15,11 @@ data/leap_voe_data/gaze_heatmap_videos/
 # stimuli/pill_stimuli/
 3_visualizations_backup.Rmd.bak
 
-# leap voe stimuli (local only)
-analysis/leap_voe_stimuli/
+# leap voe stimuli (local only), except the videos the heatmap scripts read
+analysis/leap_voe_stimuli/*
+!analysis/leap_voe_stimuli/videos/
+analysis/leap_voe_stimuli/videos/*
+!analysis/leap_voe_stimuli/videos/with_borders/
 
 # data QC figures (regenerate with analysis/3_data_qc.py)
 data/leap_voe_data/data_qc/*.png
