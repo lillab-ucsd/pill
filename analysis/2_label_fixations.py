@@ -176,6 +176,15 @@ if __name__ == "__main__":
         timing_df = pd.read_csv(timing_path)
 
         windows = build_trial_windows(timing_df)
+        output_path = subj_dir / f"{subject_name}_fix_labeled.csv"
+
+        # No fixations (e.g. tracker never found the eyes): apply() on an empty frame returns the
+        # original columns, not the 3 labels, so write the header-only file directly
+        if fix_df.empty:
+            fix_df.assign(trial_num=None, phase=None, trial_type=None).to_csv(output_path, index=False)
+            print(f"  {subject_num}: 0 fixations, wrote empty -> {output_path.name}")
+            n_labeled += 1
+            continue
 
         labels = fix_df.apply(
             lambda row: label_fixation(windows, row['startT'], row['endT']),
@@ -185,7 +194,6 @@ if __name__ == "__main__":
 
         labeled_df = pd.concat([fix_df, labels], axis=1)
 
-        output_path = subj_dir / f"{subject_name}_fix_labeled.csv"
         labeled_df.to_csv(output_path, index=False)
 
         phase_counts = labeled_df['phase'].value_counts().to_dict()

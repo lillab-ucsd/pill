@@ -148,7 +148,7 @@ def convert_tsv_to_csv(tsv_file, output_folder, timing_folder, screen_res=(1920,
 
     def check_off_screen(left_gaze_x, left_gaze_y, right_gaze_x, right_gaze_y,
                           left_valid, right_valid):
-        """1 if off-screen, 0 if on-screen. Uses avg of valid eye(s)."""
+        """1 if off-screen, 0 if on-screen. Uses avg of valid eye(s), in PsychoPy centered pixels."""
         valid_x = []
         valid_y = []
 
@@ -172,6 +172,10 @@ def convert_tsv_to_csv(tsv_file, output_folder, timing_folder, screen_res=(1920,
 
         avg_x = sum(valid_x) / len(valid_x)
         avg_y = sum(valid_y) / len(valid_y)
+
+        # Centered (y up) -> top-left pixels (y down), to match the stimulus bounds
+        avg_x = avg_x + screen_res[0] / 2
+        avg_y = -avg_y + screen_res[1] / 2
 
         if avg_x < X_MIN or avg_x > X_MAX or avg_y < Y_MIN or avg_y > Y_MAX:
             return 1
