@@ -124,3 +124,53 @@ experiment script, stimuli, and analysis. Newest at bottom.
   5. Results screen shows, then space prints `pre_validation_1: ... passed=...` to the console.
   6. `{sub_id}_validation_summary.csv` and `{sub_id}_validation.csv` fill in with real values,
      along with the events and gaze files.
+
+## 2026-10-27: LEAP-VOE data for pipeline development
+
+- **Decision:** raw data for 19 more LEAP-VOE subjects (158-176) copied from the leap_voe
+  project and renamed to match the existing files (`[sub]_leap_voe_gaze.tsv`, `_timing.csv`,
+  `_verbose.csv`, `_summary.csv`). Original-named copies remain in leap_voe.
+- **Basis:** LEAP-VOE (2 fam, 4 test trials) is a different experiment, used here to develop
+  the analysis pipeline before PILL data exists.
+- **Exclusions:** 76 infants tested (101-176). 5 infants excluded (102, 107, 116, 155, 171):
+  3 due to technical issues (102, 107, 116), 1 due to unsuccessful calibration (155), 1 due to
+  fussiness (171). Full notes in runsheet. Their files were removed from PILL; originals remain
+  in leap_voe.
+- 101's missing timing file was reconstructed from the trial events in its gaze TSV.
+- Offline-coded data removed from PILL (not used); copies remain in leap_voe.
+
+## 2026-10-27: off_screen column in 0_convert_tsv.py fixed
+
+- **Decision:** `check_off_screen()` in `analysis/0_convert_tsv.py` converts gaze from PsychoPy
+  centered pixels (y up) to top-left pixels (y down) before comparing against the stimulus
+  bounds (x 75-1845, y 42-1038; the 1770x996 movie area on a 1920x1080 screen).
+- **Basis:** raw centered values were being compared directly to top-left bounds.
+- All 71 gaze CSVs reconverted. Only `off_screen` changed.
+
+## 2026-10-27: A trial is one MOV + its STILL
+
+- **Decision:** each LEAP-VOE trial runs from the MOV's `startMoviePlayback` to the paired
+  STILL's `endTrial`: 6 trials per infant (Fam 1, Fam 2, Test 1-4). MOV and STILL are not
+  analyzed separately.
+- **Basis:** STILL is the MOV's last frame frozen and only marks coding onset.
+- `analysis/2_label_fixations.py` keeps timing-file numbering (1-12) and the `movie`/`still`
+  phase label to mark coding onset.
+
+## 2026-10-27: Data QC script reworked (2_sanity_check.py -> 3_data_qc.py)
+
+- **Decision:** `analysis/3_data_qc.py` replaces `2_sanity_check.py`. Per trial: % samples with
+  left, right, and at least one eye valid; both-eyes-invalid share; seconds of valid gaze;
+  share of coder-confirmed looking with valid gaze (coding window only). Outputs
+  `data/leap_voe_data/data_qc/voe_data_qc_trials.csv` and three figures (validity by subject,
+  validity over trials, coder vs. tracker).
+- **Basis:** modeled after `dataQC_check.py` and `qc_visualizations.Rmd` (plots 1a, 2b) in
+  `movie-watching/scripts/preprocessing/qc/`, a collaborator's experiment.
+- **Not used:** coverage and retained from the old script. movie-watching's two-eye average
+  for % valid (PILL uses at least one eye). Calibration plots (LEAP-VOE logged no calibration
+  accuracy).
+- Trials with both eyes invalid on > 80% of samples are flagged, not excluded
+  (`MAX_INVALID_FRAC = 0.8`, copied from `movie-watching/scripts/preprocessing/fixations/
+  i2mc_fixations.py`). Infants with fewer than 2 unflagged test trials are listed
+  (`MIN_TEST_TRIALS = 2`).
+- **TO-DO:** choose the real `MAX_INVALID_FRAC` threshold.
+- **TO-DO:** add calibration accuracy per subject once PILL sessions log it.
