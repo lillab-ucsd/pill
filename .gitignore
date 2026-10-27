@@ -17,3 +17,6 @@ data/leap_voe_data/gaze_heatmap_videos/
 
 # leap voe stimuli (local only)
 analysis/leap_voe_stimuli/
+
+# data QC figures (regenerate with analysis/3_data_qc.py)
+data/leap_voe_data/data_qc/*.png
