@@ -1,0 +1,127 @@
+[pill] session started 2026-11-06 08:30:26
+[pill] requested (1920, 1080), actual window size (np.int64(1920), np.int64(1080))
+[pill] loaded 8 videos
+[pill] calibration attempt 1/2
+[2. 2.]
+[pill] pre_validation_1: left=None right=None degrees, good points=0/5, bad points=5/5, passed=False
+[pill] calibration attempt 2/2
+[2. 2.]
+[pill] pre_validation_2: left=1.7522 right=2.6246 degrees, good points=1/5, bad points=4/5, passed=False
+[pill] WARNING: validation did not pass after 2 attempts, continuing anyway
+[pill] support trial 1/8: fam
+[pill] playing support_fam.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] support trial 2/8: fam
+[pill] playing support_fam.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] support trial 3/8: fam
+[pill] playing support_fam.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] WARNING: No gaze data in the last 10 seconds
+[pill] look-away confirmed, starting attention getter
+[pill] support trial 4/8: fam
+[pill] playing support_fam.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] support trial 5/8: unexpected
+[pill] playing support_unexp.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] support trial 6/8: expected
+[pill] playing support_exp.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] support trial 7/8: unexpected
+[pill] playing support_unexp.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] support trial 8/8: expected
+[pill] playing support_exp.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] goal trial 1/8: fam
+[pill] playing goal_fam.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] goal trial 2/8: fam
+[pill] playing goal_fam.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] goal trial 3/8: fam
+[pill] playing goal_fam.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] WARNING: No gaze data in the last 10 seconds
+[pill] goal trial 4/8: fam
+[pill] playing goal_fam.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] goal trial 5/8: unexpected
+[pill] playing goal_unexp.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] goal trial 6/8: expected
+[pill] playing goal_exp.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] goal trial 7/8: unexpected
+[pill] playing goal_unexp.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+[pill] goal trial 8/8: expected
+[pill] playing goal_exp.mp4
+[pill] video finished after 7.1s
+[pill] CODING WINDOW STARTS NOW!
+[pill] infant is looking
+[pill] look away!
+[pill] look-away confirmed, starting attention getter
+6.7943 	WARNING 	Monitor specification not found. Creating a temporary one...
