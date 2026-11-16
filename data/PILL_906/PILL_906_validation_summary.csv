@@ -1,0 +1,7 @@
+point,point_index,presentation_order,stimulus_x,stimulus_y,validation_step,Mean_accuracy_degrees_left,Mean_accuracy_degrees_right,Mean_accuracy_pixels_left,Mean_accuracy_pixels_right,passed
+Point 1,1,1,192.0,972.0,pre_validation_1,27.2913,28.3055,1084.7127,1125.0228,True
+Point 2,2,2,192.0,108.0,pre_validation_1,0.2915,0.0546,11.5859,2.1701,True
+Point 3,3,3,960.0,540.0,pre_validation_1,0.3052,1.0136,12.1304,40.2863,True
+Point 4,4,4,1728.0,972.0,pre_validation_1,49.6807,58.4822,1974.5957,2324.4178,True
+Point 5,5,5,1728.0,108.0,pre_validation_1,0.3073,0.5388,12.2139,21.415,True
+mean,,,,,pre_validation_1,15.5752,17.6789,619.0477,702.6608,True
